@@ -1,2 +1,17 @@
+# Python
 __pycache__/
 *.pyc
+backend/.venv/
+backend/data/
+
+# Node
+node_modules/
+frontend/dist/
+frontend/e2e-check.mjs.log
+
+# Local outputs
+*.log
+/tmp/
+
+# Test and tool caches
+.pytest_cache/

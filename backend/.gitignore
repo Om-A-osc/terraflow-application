@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Generated data: the gazetteer, the rainfall archive, the curve-number clip
+# and the disk cache are all rebuilt by scripts/ and are far too large to track.
+data/

@@ -1,0 +1,38 @@
+# Pond Planning System — backend dependencies (Python 3.10)
+#
+# Version pins that matter (see plan, "Risks"):
+#   pyflwdir 0.5.12 requires Python >= 3.11  -> pin 0.5.11
+#   rasterio 1.5    requires Python >= 3.12  -> pin < 1.5
+#   richdem does not build on this Python    -> not used
+
+# ── Web framework ────────────────────────────────────────────────────────────
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+pydantic>=2.0.0
+
+# ── Numerics / geometry ──────────────────────────────────────────────────────
+numpy>=1.24.0
+scipy>=1.11.0
+pyproj>=3.6.0
+shapely>=2.0.0
+opencv-python-headless>=4.8.0
+lxml>=4.9.0
+requests>=2.31.0
+
+# ── Hydrology engine (numba) ─────────────────────────────────────────────────
+pyflwdir==0.5.11
+numba>=0.56,<1.0
+
+# ── Raster IO (Copernicus COG windowed reads, GCN250) ────────────────────────
+rasterio>=1.3,<1.5
+
+# ── Caching / jobs / resilience ──────────────────────────────────────────────
+diskcache==5.6.3
+huey==3.4.0
+pybreaker>=1.2.0
+
+# ── Testing / load testing (dev) ─────────────────────────────────────────────
+pytest>=7.4.0
+httpx>=0.25.0
+locust>=2.20.0
