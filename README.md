@@ -8,8 +8,6 @@ how much more it could store if you paid to move soil.
 
 Everything it uses is free and needs no API key.
 
-![The app after an analysis](docs/screenshots/results.png)
-
 ---
 
 ## What it does
