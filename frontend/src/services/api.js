@@ -42,14 +42,33 @@ export class ApiError extends Error {
   }
 }
 
-async function call(promise) {
-  try {
-    const response = await promise;
-    return response.data;
-  } catch (error) {
-    const message = describe(error);
-    if (message === null) throw error; // cancelled on purpose
-    throw new ApiError(message, error.response?.status);
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * A connection that never reached the server is retried, twice.
+ *
+ * The lab host's port forwarding drops the odd connection outright (the
+ * browser reports ERR_CONNECTION_TIMED_OUT while the next attempt answers in
+ * milliseconds), so a request with no response at all is worth repeating.
+ * Every endpoint here is safe to repeat: reads are reads, and the two POSTs
+ * are deterministic and cached on the server by their inputs.
+ */
+async function call(makeRequest, retries = 2) {
+  const request = typeof makeRequest === 'function' ? makeRequest : () => makeRequest;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const response = await request();
+      return response.data;
+    } catch (error) {
+      const message = describe(error);
+      if (message === null) throw error; // cancelled on purpose
+      const neverConnected = !error.response && error.code !== 'ECONNABORTED';
+      if (neverConnected && attempt < retries) {
+        await sleep(600 * (attempt + 1));
+        continue;
+      }
+      throw new ApiError(message, error.response?.status);
+    }
   }
 }
 
@@ -61,7 +80,7 @@ export function searchVillages(q, center, limit = 8, signal) {
     params.lat = center.lat;
     params.lon = center.lng ?? center.lon;
   }
-  return call(client.get('/villages', { params, signal, timeout: 15000 }));
+  return call(() => client.get('/villages', { params, signal, timeout: 15000 }));
 }
 
 export function getVillage(village) {
@@ -71,11 +90,11 @@ export function getVillage(village) {
     params.lon = village.lon;
     params.name = village.name;
   }
-  return call(client.get(`/villages/${encodeURIComponent(village.id)}`, { params }));
+  return call(() => client.get(`/villages/${encodeURIComponent(village.id)}`, { params }));
 }
 
 export function warmVillage(village) {
-  return call(
+  return call(() =>
     client.post(`/villages/${encodeURIComponent(village.id)}/warm`, null, {
       params: { lat: village.lat, lon: village.lon },
       timeout: 15000,
@@ -84,13 +103,13 @@ export function warmVillage(village) {
 }
 
 export function getJob(jobId) {
-  return call(client.get(`/jobs/${jobId}`, { timeout: 10000 }));
+  return call(() => client.get(`/jobs/${jobId}`, { timeout: 10000 }));
 }
 
 // ── Analysis ────────────────────────────────────────────────────────────────
 
 export function analyzeArea({ geometry, numSites = 5, demSource = 'copernicus', hydrology = {}, villageId }) {
-  return call(
+  return call(() =>
     client.post('/analyze', {
       geometry,
       num_sites: numSites,
@@ -102,7 +121,7 @@ export function analyzeArea({ geometry, numSites = 5, demSource = 'copernicus', 
 }
 
 export function runEarthwork({ analysisId, siteId, budget, costs = {}, geometry = {}, includeHaulPlan = false }) {
-  return call(
+  return call(() =>
     client.post('/earthwork', {
       analysis_id: analysisId,
       site_id: siteId,
@@ -122,7 +141,7 @@ export function analyzeContour(file, resolution = 15, numCandidates = 5, onProgr
   // that made every upload fail with 422.
   formData.append('contour_map', file);
 
-  return call(
+  return call(() =>
     client.post(`/analyzeContour?resolution=${resolution}&num_candidates=${numCandidates}`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
       timeout: 300000,
@@ -138,7 +157,7 @@ export function analyzeContour(file, resolution = 15, numCandidates = 5, onProgr
 // ── System ──────────────────────────────────────────────────────────────────
 
 export function getHealth() {
-  return call(client.get('/../health', { timeout: 8000 }));
+  return call(() => client.get('/../health', { timeout: 8000 }));
 }
 
 export default client;
