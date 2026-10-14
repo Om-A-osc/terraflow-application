@@ -1,0 +1,31 @@
+# Render Blueprint for the TerraFlow backend.
+#
+# Render reads this file from the repository root, so it lives here and points
+# at backend/ with rootDir.  Apply it once in the dashboard: New -> Blueprint,
+# pick this repository, and Render creates the service from this spec; later
+# pushes to master redeploy it.
+#
+# The service builds backend/Dockerfile, which installs the dependencies and
+# builds the village gazetteer into the image, so no disk is needed.  The
+# free instance has 512 MB, so the compute pool is kept to one process; raise
+# POND_POOL_WORKERS on a larger plan.
+services:
+  - type: web
+    name: terraflow-backend
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    region: singapore
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: POND_CORS_ORIGINS
+        value: http://10.1.75.51:5285,http://localhost:5173,http://127.0.0.1:5173
+      - key: POND_POOL_WORKERS
+        value: "1"
+      - key: POND_COMPUTE_TIMEOUT
+        value: "110"
+      - key: PYTHONUNBUFFERED
+        value: "1"
