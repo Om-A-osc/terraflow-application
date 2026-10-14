@@ -19,10 +19,13 @@ COPY requirements.txt .
 RUN grep -v -E '^(locust|pytest|httpx)' requirements.txt > /tmp/req.txt \
  && pip install -r /tmp/req.txt
 
-COPY . .
+# Village gazetteer: about 16 MB downloaded, 100 MB built.  Only the builder
+# script is copied first, so this layer is cached across code changes and a
+# push rebuilds in a minute instead of ten.
+COPY scripts/build_gazetteer.py scripts/
+RUN python scripts/build_gazetteer.py --out /app/data/gazetteer.sqlite
 
-# Village gazetteer: about 16 MB downloaded, 100 MB built
-RUN python scripts/build_gazetteer.py
+COPY . .
 
 # A container host provides PORT; the app's own setting is the fallback.
 # One uvicorn process; the compute pool inside it carries the parallelism.

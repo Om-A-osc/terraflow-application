@@ -27,7 +27,13 @@ import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import config  # noqa: E402
+try:
+    import config  # noqa: E402
+    DEFAULT_OUT = str(config.GAZETTEER_DB)
+    USER_AGENT = config.HTTP_USER_AGENT
+except ImportError:  # built on its own, before the app is copied into an image
+    DEFAULT_OUT = str(Path(__file__).resolve().parent.parent / "data" / "gazetteer.sqlite")
+    USER_AGENT = "TerraFlow/3 (gazetteer build)"
 
 GEONAMES = "https://download.geonames.org/export/dump"
 PLACE_CODES = {"PPL", "PPLA", "PPLA2", "PPLA3", "PPLA4", "PPLC", "PPLL", "PPLQ", "PPLS", "PPLX"}
@@ -36,7 +42,7 @@ PLACE_CODES = {"PPL", "PPLA", "PPLA2", "PPLA3", "PPLA4", "PPLC", "PPLL", "PPLQ",
 def fetch(url: str) -> bytes:
     print(f"  downloading {url}")
     t0 = time.time()
-    resp = requests.get(url, timeout=(10, 300), headers={"User-Agent": config.HTTP_USER_AGENT})
+    resp = requests.get(url, timeout=(10, 300), headers={"User-Agent": USER_AGENT})
     resp.raise_for_status()
     print(f"    {len(resp.content) / 1e6:.1f} MB in {time.time() - t0:.1f}s")
     return resp.content
@@ -64,7 +70,7 @@ def load_admin_names() -> tuple:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--out", default=str(config.GAZETTEER_DB))
+    parser.add_argument("--out", default=DEFAULT_OUT)
     parser.add_argument("--keep-all", action="store_true",
                         help="keep every feature class, not just populated places")
     args = parser.parse_args()
