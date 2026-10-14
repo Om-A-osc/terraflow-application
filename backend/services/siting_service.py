@@ -351,6 +351,15 @@ def _dugout_candidates(bundle, allowed, score, cfg) -> list:
     pond is only as good as what drains into it, and spread out so a large
     selection gets suggestions across it rather than a cluster on one field.
     """
+    # Keep clear of the selection's edge.  The cells collecting the most water
+    # inside a selection are on its boundary, where the water leaves, and a
+    # pond placed there is clipped back to nothing.  Half the largest pond's
+    # side in from the edge, the same drainage line is still there to feed it.
+    clear_cells = int(np.ceil(config.GeometryConfig().dugout_max_side_m / 2.0 / bundle.resolution_m))
+    inner = ndimage.binary_erosion(allowed, iterations=clear_cells) if clear_cells > 0 else allowed
+    if inner.any():
+        allowed = inner
+
     flat = allowed & (bundle.slope_pct <= 2.0)
     if not flat.any():
         flat = allowed & (bundle.slope_pct <= 5.0)

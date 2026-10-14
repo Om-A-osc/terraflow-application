@@ -47,7 +47,7 @@ os.environ.setdefault("GDAL_CACHEMAX", "512")
 # Versioning — bump to invalidate every cached bundle / result
 # ─────────────────────────────────────────────────────────────────────────────
 
-ALGO_VERSION = "3.4.1"
+ALGO_VERSION = "3.4.3"
 # Raw source data (elevation windows, OpenStreetMap extracts, rainfall series,
 # climatology, geocoder answers) does not change when the algorithms do, so
 # it is keyed by this instead.  Bump it only when the way a source is fetched

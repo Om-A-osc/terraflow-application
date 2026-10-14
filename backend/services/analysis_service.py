@@ -276,7 +276,11 @@ def _analyze_uncached(
         if len(sites) >= num_sites:
             break
 
-    sites.sort(key=lambda s: -s["score"])
+    # Final order: the suitability score weighted by how much water the site
+    # would hold.  Suitability alone put a knee-deep hollow above a pond ten
+    # times its size on slightly plainer ground, which is not what anyone
+    # asking "where should the pond go" means.
+    sites.sort(key=lambda s: -_rank_value(s))
     for rank, site in enumerate(sites, start=1):
         site["rank"] = rank
     timer.mark("sites_s")
@@ -370,6 +374,14 @@ def _analyze_uncached(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _rank_value(site: dict) -> float:
+    """Suitability times a storage term: 0.5 at 300 m3, 1.0 at 20,000 m3 and above."""
+    capacity = max(1.0, float(site["storage"].get("capacity_m3") or 0.0))
+    lo, hi = np.log10(300.0), np.log10(20_000.0)
+    storage = float(np.clip((np.log10(capacity) - lo) / (hi - lo), 0.0, 1.0))
+    return float(site["score"]) * (0.5 + 0.5 * storage)
+
+
 def _build_site(
     cand, index, bundle, region, constraints, streams, cfg, hydrology,
     runoff, evaporation, robustness, quality, selection=None,
@@ -448,6 +460,23 @@ def _build_site(
     # 20 m MGNREGA model and never larger than a hectare.  A whole village
     # drawn at once then gets ponds at village scale, not a row of 20 m pits.
     if kind == "dugout" and capacity <= 0:
+        # A hollow or bund site that turned out too shallow keeps its spot,
+        # which is often right on the selection's edge where the water
+        # leaves.  A pond there would be clipped to nothing, so it is moved
+        # a little way in along the same drainage line.
+        clear_cells = int(np.ceil(config.GeometryConfig().dugout_max_side_m / 2.0 / bundle.resolution_m))
+        blocked = constraints.get("blocked") if constraints else None
+        placeable = region & ~blocked if blocked is not None and blocked.shape == region.shape else region
+        new_row, new_col = _inward_cell(bundle, placeable, row, col, clear_cells)
+        if (new_row, new_col) != (row, col):
+            row, col = new_row, new_col
+            lon, lat = pixel_to_lonlat(row, col, bundle.transform, bundle.epsg)
+            site_mask, (srow, scol) = he.catchment_of_point(bundle, row, col)
+            site_catchment_m2 = float(site_mask.sum()) * bundle.cell_area_m2
+            inflow = (
+                annual_inflow(runoff, site_catchment_m2, hydrology.dependability_pct)
+                if runoff is not None and site_catchment_m2 > 0 else {}
+            )
         depth = cfg.dugout_depth_m
         side_m = _dugout_side_for(
             float(inflow.get("dependable_m3", 0.0)), depth, cfg, lon, lat, selection
@@ -621,6 +650,31 @@ def _remember_context(analysis_id: str, bundle, region, constraints, sites, sele
 
 def load_context(analysis_id: str) -> dict | None:
     return get_cache().get(f"ctx:{config.ALGO_VERSION}:{analysis_id}", default=None)
+
+
+def _inward_cell(bundle, region: np.ndarray, row: int, col: int, clear_cells: int) -> tuple:
+    """
+    The cell near (row, col) that is at least ``clear_cells`` inside the
+    region and collects the most water, or (row, col) itself if it already
+    is.  Used to pull an excavated pond off the selection's edge.
+    """
+    from scipy import ndimage
+
+    if clear_cells <= 0:
+        return row, col
+    inner = ndimage.binary_erosion(region, iterations=clear_cells)
+    if not inner.any() or inner[row, col]:
+        return row, col
+    reach = clear_cells + 2
+    r0, r1 = max(0, row - reach), min(bundle.shape[0], row + reach + 1)
+    c0, c1 = max(0, col - reach), min(bundle.shape[1], col + reach + 1)
+    window = inner[r0:r1, c0:c1]
+    if not window.any():
+        return row, col
+    upstream = np.where(window, bundle.upstream_area[r0:r1, c0:c1], -1.0)
+    flat_index = int(np.argmax(upstream))
+    dr, dc = divmod(flat_index, window.shape[1])
+    return r0 + dr, c0 + dc
 
 
 def _dugout_side_for(dependable_inflow_m3: float, depth_m: float, cfg, lon: float, lat: float, selection) -> float:
