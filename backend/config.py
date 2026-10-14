@@ -47,7 +47,7 @@ os.environ.setdefault("GDAL_CACHEMAX", "512")
 # Versioning — bump to invalidate every cached bundle / result
 # ─────────────────────────────────────────────────────────────────────────────
 
-ALGO_VERSION = "3.5.0"
+ALGO_VERSION = "3.5.4"
 # Raw source data (elevation windows, OpenStreetMap extracts, rainfall series,
 # climatology, geocoder answers) does not change when the algorithms do, so
 # it is keyed by this instead.  Bump it only when the way a source is fetched
@@ -64,7 +64,10 @@ HOST = os.getenv("POND_HOST", "0.0.0.0")
 PORT = int(os.getenv("POND_PORT", "8000"))
 CORS_ORIGINS = os.getenv(
     "POND_CORS_ORIGINS",
-    "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://localhost:4173",
+    # The lab's frontend origin is included so a page served from there can
+    # use a backend running on the viewer's own laptop
+    "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://localhost:4173,"
+    "http://10.1.75.51:5285",
 ).split(",")
 
 MAX_UPLOAD_SIZE_MB = 50

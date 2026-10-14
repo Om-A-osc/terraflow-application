@@ -7,7 +7,7 @@ import FileUpload from './components/FileUpload';
 import MapViewer from './components/MapViewer';
 import ResultsPanel from './components/ResultsPanel';
 import VillageSearch from './components/VillageSearch';
-import { analyzeArea, getJob, getVillage, warmVillage } from './services/api';
+import { analyzeArea, getJob, getVillage, onBackendChange, warmVillage } from './services/api';
 
 const DEFAULT_LAYERS = {
   sites: true,
@@ -54,6 +54,19 @@ function BrandMark() {
         fill="#48B7A8"
       />
     </svg>
+  );
+}
+
+/** Which analysis server answered: the laptop, the cloud or the lab machine. */
+function BackendTag() {
+  const [backend, setBackend] = useState(null);
+  useEffect(() => onBackendChange(setBackend), []);
+  if (!backend || backend.base.startsWith('/')) return null;
+  return (
+    <p className={`backend-tag ${backend.reachable ? '' : 'is-down'}`}>
+      Analysis server · {backend.label}
+      {backend.reachable ? '' : ' (not answering)'}
+    </p>
   );
 }
 
@@ -214,6 +227,7 @@ export default function App() {
               </div>
             </div>
             <VillageSearch mapCenter={mapCenter} onSelect={handleVillage} disabled={busy} />
+            <BackendTag />
           </header>
 
           <section className="sidebar-section">

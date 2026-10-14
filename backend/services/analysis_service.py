@@ -259,8 +259,41 @@ def _analyze_uncached(
     selection = geom
 
     sites = []
-    placed: list[tuple[int, int]] = []
+    placed: list[tuple] = []     # row, col, half footprint (cells), catchment ha, basin geometry
     spacing_px = max(2, int(cfg.candidate_min_spacing_m / bundle.resolution_m))
+
+    def footprint_half_cells(site: dict) -> float:
+        side = (site.get("design") or {}).get("side_m") or 0.0
+        return max(spacing_px / 2.0, 0.5 * side / bundle.resolution_m)
+
+    def same_spot(site: dict, cell: tuple) -> bool:
+        """
+        Overlapping footprints are one site.  So are two points on the same
+        drainage line with no tributary between them: one lies inside the
+        other's catchment and the catchments are within a tenth of each
+        other, so a pond at either would be fed by the same runoff.
+        """
+        from shapely.geometry import shape
+
+        half = footprint_half_cells(site)
+        ha = float(site["catchment"]["area_ha"])
+        basin = site["catchment"].get("feature")
+        geom = shape(basin["geometry"]) if basin is not None else None
+        for r, c, other_half, other_ha, other_geom in placed:
+            if max(abs(cell[0] - r), abs(cell[1] - c)) < half + other_half:
+                return True
+            if abs(ha - other_ha) > 0.1 * max(ha, other_ha, 1e-9):
+                continue
+            if geom is None or other_geom is None:
+                continue
+            try:
+                # Same water: the two catchments are nearly the same polygon
+                union = geom.union(other_geom).area
+                if union > 0 and geom.intersection(other_geom).area / union >= 0.9:
+                    return True
+            except Exception:  # noqa: BLE001 - a bad polygon never hides a site
+                continue
+        return False
     for index, cand in enumerate(candidates):
         site = _build_site(
             cand, index, bundle, region, constraints, streams, cfg, hydrology,
@@ -274,11 +307,14 @@ def _analyze_uncached(
                     "Dropping site at (%.5f, %.5f): outside the selected area",
                     site["location"]["lat"], site["location"]["lon"],
                 )
-            elif any(abs(cell[0] - r) <= spacing_px and abs(cell[1] - c) <= spacing_px for r, c in placed):
-                # Moving a site off the edge can land it where another already is
-                logger.info("Dropping site at %s: on top of an earlier site", cell)
+            elif same_spot(site, cell):
+                logger.info("Dropping site at %s: the same spot as an earlier site", cell)
             else:
-                placed.append(cell)
+                basin = site["catchment"].get("feature")
+                placed.append((
+                    cell[0], cell[1], footprint_half_cells(site), float(site["catchment"]["area_ha"]),
+                    shape(basin["geometry"]) if basin is not None else None,
+                ))
                 sites.append(site)
         if len(sites) >= num_sites:
             break

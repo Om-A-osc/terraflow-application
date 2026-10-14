@@ -146,6 +146,17 @@ input { font: inherit; }
 
 .masthead .village-search { margin-top: 15px; }
 
+.backend-tag {
+  margin-top: 8px;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.backend-tag.is-down { color: var(--clay); }
+
 .app-body { display: flex; flex: 1; min-height: 0; }
 
 .sidebar {

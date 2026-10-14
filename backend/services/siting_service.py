@@ -381,7 +381,10 @@ def _dugout_candidates(bundle, allowed, score, cfg) -> list:
         taken.append((row, col))
         out.append(Candidate(
             row=row, col=col, kind="dugout",
-            score=float(score[row, col]) * 0.8,   # no natural storage to start from
+            # No penalty for having no basin: the final ranking already
+            # credits natural storage, and the question here is where the
+            # water collects
+            score=float(score[row, col]),
             criteria={
                 "slope_pct": round(float(bundle.slope_pct[row, col]), 2),
                 "upstream_ha": round(float(upa_ha[row, col]), 2),
