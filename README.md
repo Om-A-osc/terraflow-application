@@ -248,9 +248,10 @@ step.
 ## Limits
 
 - A 30 m grid cannot resolve a 20 by 20 m farm pond. Where the terrain offers no
-  usable basin the app says so and proposes an excavated pond sized to the
-  MGNREGA model, which the budget filter then grows. Upload a surveyed contour
-  file for small ponds.
+  usable basin the app says so and proposes an excavated pond sized to what
+  its catchment delivers, never smaller than the 20 m MGNREGA model, which
+  the budget filter then grows. Upload a surveyed contour file for small
+  ponds.
 - Copernicus GLO-30 is a surface model. Buildings and woodland are levelled
   against their surroundings, but dense canopy still adds error.
 - Runoff methods disagree by up to a factor of two, and the initial abstraction
