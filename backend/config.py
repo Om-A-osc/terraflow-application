@@ -47,7 +47,14 @@ os.environ.setdefault("GDAL_CACHEMAX", "512")
 # Versioning — bump to invalidate every cached bundle / result
 # ─────────────────────────────────────────────────────────────────────────────
 
-ALGO_VERSION = "3.3.0"
+ALGO_VERSION = "3.4.1"
+# Raw source data (elevation windows, OpenStreetMap extracts, rainfall series,
+# climatology, geocoder answers) does not change when the algorithms do, so
+# it is keyed by this instead.  Bump it only when the way a source is fetched
+# or parsed changes.  Keying it by ALGO_VERSION meant every algorithm change
+# threw the data away and refetched it, and a source that happened to be down
+# at that moment took the whole analysis with it.
+DATA_VERSION = "1"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Server
@@ -82,6 +89,10 @@ BREAKER_RESET_TIMEOUT_S = 60
 CACHE_TTL_BUNDLE = None
 CACHE_TTL_DEM = None
 CACHE_TTL_RESULT = 7 * 86400
+# A result computed while a source was down is still returned, but it is not
+# kept long: the next request should try the source again rather than serve
+# a yield-less answer for a week.
+CACHE_TTL_DEGRADED = 120
 CACHE_TTL_OSM = 30 * 86400
 CACHE_TTL_CLIMATE = 30 * 86400
 CACHE_TTL_GEOCODE = 30 * 86400
@@ -138,9 +149,15 @@ class AnalysisConfig(BaseModel):
     # the location is offered as something to excavate instead.
     min_mean_depth_m: float = 0.3
     # MGNREGA-style excavated farm pond used where terrain offers no basin
-    dugout_side_m: float = 20.0
+    dugout_side_m: float = 20.0             # the smallest pond offered (MGNREGA model)
     dugout_depth_m: float = 3.0
     dugout_side_slope_factor: float = 0.6   # trapezoidal section vs a box
+    # An excavated pond is sized to what its catchment delivers: this fraction
+    # of the 75% dependable annual inflow, since a pond that holds more than
+    # its monsoon will not fill.  Bounded by the 20 m model below and
+    # GeometryConfig.dugout_max_side_m above.
+    dugout_design_fraction: float = 0.5
+    dugout_min_spacing_m: float = 150.0     # between excavated-pond suggestions
 
     # ── Stage–storage ───────────────────────────────────────────────────────
     stage_step_m: float = 0.1

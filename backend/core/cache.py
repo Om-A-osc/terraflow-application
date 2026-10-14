@@ -53,6 +53,11 @@ def _norm(value: Any) -> Any:
     return value
 
 
+# Namespaces that hold data as fetched from a source, before any algorithm
+# touches it.  They survive an algorithm version bump.
+RAW_SOURCE_NAMESPACES = frozenset({"dem", "osm", "rain_power", "climatology", "photon", "boundary"})
+
+
 def make_key(namespace: str, *parts: Any, **kwargs: Any) -> str:
     """
     Build a versioned cache key.
@@ -67,7 +72,8 @@ def make_key(namespace: str, *parts: Any, **kwargs: Any) -> str:
         default=str,
     )
     digest = hashlib.sha1(payload.encode()).hexdigest()
-    return f"{namespace}:{config.ALGO_VERSION}:{digest}"
+    version = config.DATA_VERSION if namespace in RAW_SOURCE_NAMESPACES else config.ALGO_VERSION
+    return f"{namespace}:{version}:{digest}"
 
 
 def polygon_key(coords: list, **params: Any) -> str:
@@ -122,10 +128,13 @@ def cached_call(
     producer: Callable[[], Any],
     expire: int | None = None,
     use_lock: bool = True,
+    expire_for: Callable[[Any], int | None] | None = None,
 ) -> Any:
     """
     Get ``key`` from the cache, or compute it with ``producer`` and store it.
 
+    ``expire_for`` may pick a lifetime from the produced value, so a result
+    computed while a source was down can be kept briefly rather than for days.
     Counts hits and misses for /metrics.
     """
     cache = get_cache()
@@ -134,9 +143,13 @@ def cached_call(
         bump("cache_hits")
         return hit
 
+    def store(value):
+        ttl = expire_for(value) if expire_for is not None else expire
+        cache.set(key, value, expire=ttl)
+
     if not use_lock:
         value = producer()
-        cache.set(key, value, expire=expire)
+        store(value)
         bump("cache_misses")
         return value
 
@@ -147,7 +160,7 @@ def cached_call(
             bump("cache_hits")
             return hit
         value = producer()
-        cache.set(key, value, expire=expire)
+        store(value)
         bump("cache_misses")
         return value
 

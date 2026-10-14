@@ -128,7 +128,14 @@ def analyze_polygon(
 
     if not use_cache:
         return produce()
-    return cached_call(key, produce, expire=config.CACHE_TTL_RESULT)
+    def lifetime(result: dict) -> int:
+        # A missing source shows up as a data-quality note; such a result
+        # is served now but retried soon
+        notes = " ".join(result.get("data_quality", {}).get("notes", [])).lower()
+        degraded = any(flag in notes for flag in ("unavailable", "unreachable", "could not"))
+        return config.CACHE_TTL_DEGRADED if degraded else config.CACHE_TTL_RESULT
+
+    return cached_call(key, produce, expire_for=lifetime)
 
 
 def _analyze_uncached(
@@ -427,20 +434,32 @@ def _build_site(
         )
         return None
 
-    # A dug-out pond has no natural basin: size it to the MGNREGA model and let
-    # the budget filter grow it.
+    lon, lat = pixel_to_lonlat(row, col, bundle.transform, bundle.epsg)
+
+    # Catchment of this site, needed before an excavated pond can be sized
+    site_mask, (srow, scol) = he.catchment_of_point(bundle, row, col)
+    site_catchment_m2 = float(site_mask.sum()) * bundle.cell_area_m2
+    inflow = {}
+    if runoff is not None and site_catchment_m2 > 0:
+        inflow = annual_inflow(runoff, site_catchment_m2, hydrology.dependability_pct)
+
+    # A dug-out pond has no natural basin, so it is sized to what drains into
+    # it: a fraction of the dependable annual inflow, never smaller than the
+    # 20 m MGNREGA model and never larger than a hectare.  A whole village
+    # drawn at once then gets ponds at village scale, not a row of 20 m pits.
     if kind == "dugout" and capacity <= 0:
+        depth = cfg.dugout_depth_m
+        side_m = _dugout_side_for(
+            float(inflow.get("dependable_m3", 0.0)), depth, cfg, lon, lat, selection
+        )
         # The pond is a designed shape, so its capacity comes from the shape
         # that gets drawn, not from the raster cell that happens to hold it.
-        # A 20 m pond is smaller than one 30 m cell, and sizing it by the cell
-        # would overstate the storage by more than double.
-        lon0, lat0 = pixel_to_lonlat(row, col, bundle.transform, bundle.epsg)
         dugout_feature = _clip_to_selection(
-            _dugout_footprint(lon0, lat0, cfg, 0.0), selection
+            _dugout_footprint(lon, lat, cfg, 0.0, side_m=side_m), selection
         )
         area = polygon_area_m2(dugout_feature["geometry"]) if dugout_feature else 0.0
 
-        side_cells = max(1, int(round(cfg.dugout_side_m / bundle.resolution_m)))
+        side_cells = max(1, int(round(side_m / bundle.resolution_m)))
         footprint_mask = np.zeros(bundle.shape, dtype=bool)
         r0 = max(0, row - side_cells // 2); r1 = min(bundle.shape[0], r0 + side_cells)
         c0 = max(0, col - side_cells // 2); c1 = min(bundle.shape[1], c0 + side_cells)
@@ -451,7 +470,6 @@ def _build_site(
         if area <= 0:
             area = float(footprint_mask.sum()) * bundle.cell_area_m2
 
-        depth = cfg.dugout_depth_m
         capacity = area * depth * cfg.dugout_side_slope_factor
         bed = float(bundle.dem[row, col]) - depth
         curve = {
@@ -466,20 +484,17 @@ def _build_site(
             "live_storage_m3": round(capacity - area * cfg.dead_storage_m * 0.6, 1),
             "surface_area_m2": round(area, 1),
             "max_depth_m": depth,
+            "side_m": side_m,
             "mask": footprint_mask,
-            "note": "Excavated pond sized to the MGNREGA model; the terrain offers no usable basin",
+            "note": (
+                f"Excavated pond, {side_m:.0f} m a side, sized to its {site_catchment_m2 / 1e4:.1f} ha "
+                "catchment; the terrain offers no usable basin"
+            ),
         }
 
-    lon, lat = pixel_to_lonlat(row, col, bundle.transform, bundle.epsg)
-
-    # Catchment of this site
-    site_mask, (srow, scol) = he.catchment_of_point(bundle, row, col)
-    site_catchment_m2 = float(site_mask.sum()) * bundle.cell_area_m2
-
     # Yield for this site's own catchment
-    inflow, balance = {}, {}
+    balance = {}
     if runoff is not None and site_catchment_m2 > 0:
-        inflow = annual_inflow(runoff, site_catchment_m2, hydrology.dependability_pct)
         balance = water_balance(
             runoff, site_catchment_m2, curve, capacity, evaporation, hydrology
         )
@@ -507,7 +522,7 @@ def _build_site(
     # happens to contain it.
     if kind == "dugout":
         footprint_feature = _clip_to_selection(
-            _dugout_footprint(lon, lat, cfg, capacity), selection
+            _dugout_footprint(lon, lat, cfg, capacity, side_m=curve.get("side_m")), selection
         )
     else:
         footprint_feature = _clip_to_selection(footprint_feature, selection)
@@ -594,6 +609,7 @@ def _remember_context(analysis_id: str, bundle, region, constraints, sites, sele
                 "capacity_m3": s["storage"]["capacity_m3"],
                 "surface_area_m2": s["storage"].get("surface_area_m2", 0.0),
                 "max_depth_m": s["storage"].get("max_depth_m", 0.0),
+                "side_m": s["stage_storage"].get("side_m"),
                 "stage_storage": s["stage_storage"],
                 "spill_level_m": s["storage"].get("spill_level_m"),
             }
@@ -605,6 +621,27 @@ def _remember_context(analysis_id: str, bundle, region, constraints, sites, sele
 
 def load_context(analysis_id: str) -> dict | None:
     return get_cache().get(f"ctx:{config.ALGO_VERSION}:{analysis_id}", default=None)
+
+
+def _dugout_side_for(dependable_inflow_m3: float, depth_m: float, cfg, lon: float, lat: float, selection) -> float:
+    """
+    Side of an excavated pond that stores a design fraction of its dependable
+    inflow, in 2 m steps, between the 20 m model and a hectare, and shrunk
+    until the drawn shape fits inside the user's selection.
+    """
+    target = dependable_inflow_m3 * cfg.dugout_design_fraction
+    side = (target / max(1e-9, depth_m * cfg.dugout_side_slope_factor)) ** 0.5
+    max_side = config.GeometryConfig().dugout_max_side_m
+    side = float(np.clip(2.0 * round(side / 2.0), cfg.dugout_side_m, max_side))
+    if selection is None:
+        return side
+    while side > cfg.dugout_side_m:
+        whole = polygon_area_m2(_dugout_footprint(lon, lat, cfg, 0.0, side_m=side)["geometry"])
+        kept = _clip_to_selection(_dugout_footprint(lon, lat, cfg, 0.0, side_m=side), selection)
+        if kept is not None and polygon_area_m2(kept["geometry"]) >= 0.9 * whole:
+            break
+        side -= 2.0
+    return side
 
 
 def _dugout_footprint(lon: float, lat: float, cfg, capacity_m3: float, side_m: float | None = None) -> dict:

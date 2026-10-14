@@ -241,6 +241,8 @@ def curve_for_payload(curve: dict, max_points: int = 40) -> dict:
         "volume_m3": [curve["volume_m3"][i] for i in subset],
         "bed_level_m": curve.get("bed_level_m"),
         "spill_level_m": curve.get("spill_level_m"),
+        # Present only for an excavated pond, which is a designed shape
+        "side_m": curve.get("side_m"),
         "usable_level_m": curve.get("usable_level_m"),
         "capacity_m3": curve.get("capacity_m3"),
         "dead_storage_m3": curve.get("dead_storage_m3"),

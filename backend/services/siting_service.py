@@ -344,25 +344,39 @@ def _escapes_window(wet: np.ndarray, window: np.ndarray) -> bool:
 
 
 def _dugout_candidates(bundle, allowed, score, cfg) -> list:
-    """Flat, unconstrained ground for an excavated pond when nothing else fits."""
+    """
+    Flat, unconstrained ground for an excavated pond when nothing else fits.
+
+    Ranked by the site score weighted towards upstream area, because a dug
+    pond is only as good as what drains into it, and spread out so a large
+    selection gets suggestions across it rather than a cluster on one field.
+    """
     flat = allowed & (bundle.slope_pct <= 2.0)
     if not flat.any():
         flat = allowed & (bundle.slope_pct <= 5.0)
     if not flat.any():
         return []
 
-    masked = np.where(flat, score, -1)
-    n_take = min(8, int(flat.sum()))
-    idxs = np.argpartition(masked.ravel(), -n_take)[-n_take:]
-    out = []
-    for idx in idxs:
-        if masked.ravel()[idx] <= 0:
-            continue
+    upa_ha = bundle.upstream_area / 10_000.0
+    ranked = np.where(flat, score * (1.0 + np.log10(1.0 + np.maximum(upa_ha, 0.0))), -1.0)
+    order = np.argsort(ranked.ravel())[::-1]
+    spacing_cells = max(1, int(round(cfg.dugout_min_spacing_m / bundle.resolution_m)))
+
+    out, taken = [], []
+    for idx in order[:400]:
+        if ranked.ravel()[idx] <= 0 or len(out) >= 8:
+            break
         row, col = divmod(int(idx), bundle.shape[1])
+        if any(abs(row - r) < spacing_cells and abs(col - c) < spacing_cells for r, c in taken):
+            continue
+        taken.append((row, col))
         out.append(Candidate(
             row=row, col=col, kind="dugout",
             score=float(score[row, col]) * 0.8,   # no natural storage to start from
-            criteria={"slope_pct": round(float(bundle.slope_pct[row, col]), 2)},
+            criteria={
+                "slope_pct": round(float(bundle.slope_pct[row, col]), 2),
+                "upstream_ha": round(float(upa_ha[row, col]), 2),
+            },
         ))
     return out
 

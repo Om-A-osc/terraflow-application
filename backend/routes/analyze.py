@@ -242,7 +242,8 @@ def _earthwork_dugout(payload: dict, context: dict, site: dict, resolution_m: fl
         feature = footprint(side_m)
         return polygon_area_m2(feature["geometry"]) if feature else 0.0
 
-    base_side = float(cfg.dugout_side_m)
+    # The pond was sized to its catchment at analysis time; grow from that
+    base_side = float(site.get("side_m") or cfg.dugout_side_m)
     base_area = float(site.get("surface_area_m2") or area_for_side(base_side))
     base_depth = float(site.get("max_depth_m") or cfg.dugout_depth_m)
 
