@@ -259,6 +259,8 @@ def _analyze_uncached(
     selection = geom
 
     sites = []
+    placed: list[tuple[int, int]] = []
+    spacing_px = max(2, int(cfg.candidate_min_spacing_m / bundle.resolution_m))
     for index, cand in enumerate(candidates):
         site = _build_site(
             cand, index, bundle, region, constraints, streams, cfg, hydrology,
@@ -266,20 +268,22 @@ def _analyze_uncached(
         )
         if site is not None:
             point = Point(site["location"]["lon"], site["location"]["lat"])
+            cell = (site["cell"]["row"], site["cell"]["col"])
             if not selection.covers(point):
                 logger.info(
                     "Dropping site at (%.5f, %.5f): outside the selected area",
                     site["location"]["lat"], site["location"]["lon"],
                 )
+            elif any(abs(cell[0] - r) <= spacing_px and abs(cell[1] - c) <= spacing_px for r, c in placed):
+                # Moving a site off the edge can land it where another already is
+                logger.info("Dropping site at %s: on top of an earlier site", cell)
             else:
+                placed.append(cell)
                 sites.append(site)
         if len(sites) >= num_sites:
             break
 
-    # Final order: the suitability score weighted by how much water the site
-    # would hold.  Suitability alone put a knee-deep hollow above a pond ten
-    # times its size on slightly plainer ground, which is not what anyone
-    # asking "where should the pond go" means.
+    # Final order: where the water collects first, see _rank_value
     sites.sort(key=lambda s: -_rank_value(s))
     for rank, site in enumerate(sites, start=1):
         site["rank"] = rank
@@ -375,11 +379,17 @@ def _analyze_uncached(
 
 
 def _rank_value(site: dict) -> float:
-    """Suitability times a storage term: 0.5 at 300 m3, 1.0 at 20,000 m3 and above."""
-    capacity = max(1.0, float(site["storage"].get("capacity_m3") or 0.0))
-    lo, hi = np.log10(300.0), np.log10(20_000.0)
-    storage = float(np.clip((np.log10(capacity) - lo) / (hi - lo), 0.0, 1.0))
-    return float(site["score"]) * (0.5 + 0.5 * storage)
+    """
+    Suitability weighted by how much water arrives at the spot and how much
+    the ground already holds.  The proposed dig's size plays no part: the
+    order answers "where does the water collect", and the budget filter
+    answers "how big a pond to make there".
+    """
+    inflow = max(1.0, float(site["yield"].get("annual_inflow_dependable_m3") or 0.0))
+    natural = max(1.0, float(site["natural"].get("capacity_m3") or 0.0))
+    m_inflow = float(np.clip((np.log10(inflow) - 3.0) / 2.0, 0.0, 1.0))      # 1,000 .. 100,000 m3
+    m_natural = float(np.clip((np.log10(natural) - np.log10(300.0)) / (np.log10(20_000.0) - np.log10(300.0)), 0.0, 1.0))
+    return float(site["score"]) * (0.4 + 0.4 * m_inflow + 0.2 * m_natural)
 
 
 def _build_site(
@@ -425,6 +435,14 @@ def _build_site(
     # of water is not a check dam, and calling it one would flatter the result.
     too_small = capacity < cfg.min_useful_capacity_m3
     too_shallow = surface_area > 0 and mean_depth < cfg.min_mean_depth_m
+    # What the ground holds on its own, kept whatever is decided below: the
+    # cards show it, and a spot's natural storage counts towards its rank.
+    natural = {
+        "capacity_m3": round(capacity, 1),
+        "max_depth_m": round(float(curve.get("max_depth_m") or 0.0), 2),
+        "surface_area_m2": round(surface_area, 1),
+        "usable": not (too_small or too_shallow),
+    }
     if too_small or too_shallow:
         if too_shallow and not too_small:
             logger.info(
@@ -516,8 +534,11 @@ def _build_site(
             "side_m": side_m,
             "mask": footprint_mask,
             "note": (
-                f"Excavated pond, {side_m:.0f} m a side, sized to its {site_catchment_m2 / 1e4:.1f} ha "
-                "catchment; the terrain offers no usable basin"
+                (f"The hollow here is only {natural['max_depth_m']:.1f} m deep"
+                 if natural["max_depth_m"] >= 0.1 else "No natural basin here")
+                + f", so a dig is proposed: {depth:.0f} m deep and {side_m:.0f} m a side holds "
+                f"{area * depth * cfg.dugout_side_slope_factor:,.0f} m\u00b3, sized to the "
+                f"{site_catchment_m2 / 1e4:.1f} ha that drains to this spot. The budget filter grows it."
             ),
         }
 
@@ -602,6 +623,11 @@ def _build_site(
             "month_labels": balance.get("month_labels", []),
             "years": inflow.get("years", 0),
         },
+        "natural": natural,
+        "design": (
+            {"depth_m": depth_m, "side_m": curve.get("side_m"), "capacity_m3": round(capacity, 1)}
+            if kind == "dugout" else None
+        ),
         "stage_storage": curve_for_payload(curve),
         "bund": cand.bund,
         "footprint": footprint_feature,

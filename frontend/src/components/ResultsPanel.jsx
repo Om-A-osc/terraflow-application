@@ -124,6 +124,11 @@ export default function ResultsPanel({
 function SiteCard({ site, index, active, onSelect, showCatchment, onToggleCatchment }) {
   const y = site.yield ?? {};
   const storage = site.storage ?? {};
+  const natural = site.natural ?? {};
+  // A dug pond is a proposal: the card leads with what the ground does on
+  // its own, and shows the dig as what the budget filter would start from.
+  const proposed = site.kind === 'dugout';
+  const naturalDepth = natural.max_depth_m ?? storage.max_depth_m ?? 0;
   return (
     <article
       className={`site-card ${active ? 'active' : ''}`}
@@ -144,17 +149,36 @@ function SiteCard({ site, index, active, onSelect, showCatchment, onToggleCatchm
       </header>
 
       <div className="site-stats">
-        <Stat small label="Holds" value={Math.round(storage.capacity_m3).toLocaleString('en-IN')} unit="m³" />
-        <Stat small label="Depth" value={storage.max_depth_m} unit="m" />
         <Stat small label="Catchment" value={site.catchment.area_ha.toFixed(1)} unit="ha" />
         <Stat
           small
-          label="Collects a year"
+          label="Arrives a year"
+          value={Math.round(y.annual_inflow_dependable_m3 ?? 0).toLocaleString('en-IN')}
+          unit="m³"
+        />
+        <Stat
+          small
+          label="Natural depth"
+          value={naturalDepth >= 0.1 ? naturalDepth.toFixed(1) : 'none'}
+          unit={naturalDepth >= 0.1 ? 'm' : ''}
+        />
+        {proposed ? (
+          <Stat
+            small
+            label={`If dug ${site.design?.depth_m ?? storage.max_depth_m} m`}
+            value={Math.round(storage.capacity_m3).toLocaleString('en-IN')}
+            unit="m³"
+          />
+        ) : (
+          <Stat small label="Holds" value={Math.round(storage.capacity_m3).toLocaleString('en-IN')} unit="m³" />
+        )}
+        <Stat
+          small
+          label={proposed ? 'Would collect' : 'Collects a year'}
           value={Math.round(y.harvestable_mean_m3 ?? 0).toLocaleString('en-IN')}
           unit="m³"
         />
         <Stat small label="Holds water" value={y.mean_wet_months ?? '—'} unit="months" />
-        <Stat small label="Slope" value={site.slope_pct} unit="%" />
       </div>
 
       {storage.note && <p className="site-note">{storage.note}</p>}
@@ -191,7 +215,7 @@ function SiteCard({ site, index, active, onSelect, showCatchment, onToggleCatchm
 function describeKind(kind) {
   if (kind === 'depression') return 'natural hollow';
   if (kind === 'embankment') return 'bund across a drainage line';
-  if (kind === 'dugout') return 'excavated pond';
+  if (kind === 'dugout') return 'where the water collects · dig proposed';
   return kind;
 }
 
